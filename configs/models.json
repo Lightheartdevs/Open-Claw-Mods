@@ -1,0 +1,25 @@
+{
+  "providers": {
+    "vllm": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "none",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "Qwen2.5-32B-Instruct-AWQ",
+          "name": "Qwen 2.5 32B vLLM",
+          "reasoning": false,
+          "input": ["text"],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 5000,
+          "maxTokens": 4096
+        }
+      ]
+    }
+  }
+}
