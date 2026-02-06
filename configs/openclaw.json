@@ -1,7 +1,7 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.1.30",
-    "lastTouchedAt": "2026-02-01T22:35:00.000Z"
+    "lastTouchedVersion": "2026.2.4",
+    "lastTouchedAt": "2026-02-06T21:00:13.411Z"
   },
   "wizard": {
     "lastRunAt": "2026-02-01T21:14:27.515Z",
@@ -9,23 +9,59 @@
     "lastRunCommand": "doctor",
     "lastRunMode": "local"
   },
+  "models": {
+    "providers": {
+      "local-vllm": {
+        "baseUrl": "http://192.168.0.122:9100/v1",
+        "apiKey": "none",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "openai/gpt-oss-120b",
+            "name": "GPT-OSS 120B (Local Cluster)",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
   "agents": {
     "defaults": {
       "model": {
         "primary": "anthropic/claude-opus-4-5",
-        "fallbacks": ["anthropic/claude-sonnet-4-5"]
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-5"
+        ]
       },
       "models": {
         "anthropic/claude-opus-4-5": {},
-        "anthropic/claude-sonnet-4-5": {}
+        "anthropic/claude-sonnet-4-5": {
+          "alias": "sonnet"
+        },
+        "local-vllm/openai/gpt-oss-120b": {}
       },
       "maxConcurrent": 4,
       "subagents": {
-        "maxConcurrent": 8
+        "maxConcurrent": 8,
+        "model": "local-vllm/openai/gpt-oss-120b"
       }
     }
   },
   "tools": {},
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
   "commands": {
     "native": "auto",
     "nativeSkills": "auto"
@@ -33,16 +69,13 @@
   "channels": {},
   "gateway": {
     "port": 18789,
-    "bind": "lan",
     "mode": "local",
-    "auth": {
-      "token": "REDACTED"
-    },
+    "bind": "lan",
     "controlUi": {
       "allowInsecureAuth": true
+    },
+    "auth": {
+      "token": "REDACTED"
     }
-  },
-  "messages": {
-    "ackReactionScope": "group-mentions"
   }
 }
