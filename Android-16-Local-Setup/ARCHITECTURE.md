@@ -114,6 +114,70 @@ Each line is a JSON object with types:
 - `message` — user/assistant messages with tool calls
 - `tool_result` — tool execution results
 
+## Discord Message Flow
+
+When someone messages in Discord, OpenClaw processes it through this pipeline:
+
+```
+Discord message arrives
+       ↓
+OpenClaw Discord plugin receives it
+       ↓
+Channel check: Is the channel in our allowlist?
+  NO  → Ignore
+  YES → Check requireMention setting
+         ↓
+requireMention: true?
+  YES → Does message @mention our bot?
+    NO  → Log "discord: skipping guild message, reason: no-mention"
+    YES → Continue
+  NO  → Continue (always process, e.g. #android-16)
+         ↓
+discord-auto-reply module routes to agent
+       ↓
+Agent session created on lane: session:agent:main:discord:channel:<id>
+       ↓
+Request sent to vLLM via proxy (provider=vllm, model=Qwen2.5-Coder-32B)
+       ↓
+Model response received
+       ↓
+If "NO_REPLY" → Do nothing (model decided message doesn't need a response)
+If text/tool  → Post response to Discord channel
+```
+
+### Key Behaviors Learned
+- **NO_REPLY** — The model sometimes returns `NO_REPLY` when it decides a message doesn't need a response. This is the model's judgment, not a bug. Direct questions and @mentions get responses.
+- **Session persistence** — Discord conversations use the same session across messages in a channel. Session ID is per-channel.
+- **Heartbeat** — On startup, the model responds to an initial heartbeat check with `HEARTBEAT_OK`.
+- **Reaction listener** — OpenClaw listens for Discord reactions too (ackReactionScope: "group-mentions").
+
+## Gateway Architecture
+
+The gateway is the long-running process that hosts the agent, Discord plugin, and API:
+
+```
+systemd (openclaw-gateway.service)
+  └─ openclaw-gateway (Node.js process)
+       ├─ Gateway WebSocket server (ws://0.0.0.0:18791)
+       ├─ Discord plugin (bot token from config)
+       │    ├─ Listens on 9 channels
+       │    └─ Routes messages to agent sessions
+       ├─ Agent runner (embedded pi-agent)
+       │    ├─ Qwen2.5-Coder-32B via vLLM proxy
+       │    └─ 23 built-in tools
+       ├─ Heartbeat (periodic health check)
+       ├─ Cron scheduler (jobs.json)
+       └─ Canvas host (localhost:18791/__openclaw__/canvas/)
+```
+
+### Port Map (all .143 gateways)
+| Port | Agent | Service |
+|------|-------|---------|
+| 18789 | Android-17 | OpenClaw gateway (on .122) |
+| 18790 | Todd | OpenClaw gateway (on .143, Docker HOME=/home/michael/todd) |
+| 18791 | Android-16 | OpenClaw gateway (on .143, HOME=/home/michael) |
+| 19001 | Dev profile | OpenClaw gateway-dev (on .143, ~/.openclaw-dev/) |
+
 ## Config Resolution Order
 
 1. `~/.openclaw/openclaw.json` — user config (source of truth)

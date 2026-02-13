@@ -80,49 +80,22 @@ openclaw setup
 
 ## Step 4: Configure OpenClaw (on .143)
 
-Copy `configs/openclaw.json` to `~/.openclaw/openclaw.json`.
-
-Or create it manually:
-```json
-{
-  "models": {
-    "mode": "merge",
-    "providers": {
-      "vllm": {
-        "baseUrl": "http://192.168.0.122:8003/v1",
-        "apiKey": "vllm-local",
-        "api": "openai-completions",
-        "models": [
-          {
-            "id": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-            "name": "Qwen 2.5 Coder 32B",
-            "reasoning": false,
-            "input": ["text"],
-            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-            "contextWindow": 32768,
-            "maxTokens": 8192,
-            "compat": {
-              "supportsDeveloperRole": false,
-              "supportsStore": false,
-              "maxTokensField": "max_tokens",
-              "supportsReasoningEffort": false
-            }
-          }
-        ]
-      }
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
-      }
-    }
-  }
-}
+Copy `configs/openclaw.json` to `~/.openclaw/openclaw.json`:
+```bash
+# From your local machine:
+scp configs/openclaw.json michael@192.168.0.143:~/.openclaw/openclaw.json
 ```
 
-**Critical:** The `baseUrl` points to the **proxy** on port 8003, NOT directly to vLLM on port 8000.
+The config includes:
+- **models** — vLLM provider pointing to proxy on :8003 with compat flags
+- **channels.discord** — Bot token, guild, 9 channels (requireMention=false only for #android-16)
+- **gateway** — Port 18791 with LAN binding
+- **plugins** — Discord plugin enabled
+- **messages** — ackReactionScope for group mentions
+
+See `configs/openclaw.json` in this repo for the full file.
+
+**Critical:** The `baseUrl` MUST point to port **8003** (proxy), NOT 8000 (vLLM direct).
 
 Delete the auto-generated models cache:
 ```bash
@@ -135,7 +108,49 @@ echo 'export VLLM_API_KEY=vllm-local' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-## Step 5: Verify the Setup
+## Step 5: Deploy the Gateway Service (on .143)
+
+Copy the systemd service file:
+```bash
+# From your local machine:
+scp configs/openclaw-gateway.service michael@192.168.0.143:~/.config/systemd/user/openclaw-gateway.service
+```
+
+Enable and start:
+```bash
+ssh michael@192.168.0.143
+systemctl --user daemon-reload
+systemctl --user enable openclaw-gateway.service
+systemctl --user start openclaw-gateway.service
+```
+
+Verify it started:
+```bash
+systemctl --user status openclaw-gateway.service
+```
+
+You should see:
+- `Active: active (running)`
+- `[gateway] agent model: vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ`
+- `[discord] starting provider (@Android-16 (Local))`
+- `[discord] logged in to discord as 1470898132668776509`
+- `[gateway] listening on ws://0.0.0.0:18791`
+
+**Note:** "channels unresolved" at startup is normal — they resolve within 1-2 seconds after Discord login.
+
+### Gateway Service Details
+| Setting | Value |
+|---------|-------|
+| Service name | `openclaw-gateway.service` |
+| Port | 18791 |
+| Service file | `~/.config/systemd/user/openclaw-gateway.service` |
+| Config read from | `~/.openclaw/openclaw.json` (via `HOME=/home/michael`) |
+| Auto-restart | Yes (RestartSec=5) |
+| Starts on boot | Yes (enabled, WantedBy=default.target) |
+| Logs | `journalctl --user -u openclaw-gateway.service` |
+| Detailed log | `/tmp/openclaw/openclaw-YYYY-MM-DD.log` |
+
+## Step 6: Verify the Setup
 
 Check agent configuration:
 ```bash

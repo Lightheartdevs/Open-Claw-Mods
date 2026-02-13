@@ -2,6 +2,7 @@
 
 **Last verified working state:** 2026-02-13
 **Score:** 88% functional (20/26 tests pass, 3 partial, 3 fail)
+**Discord:** Online as @Android-16 (Local), bot ID `1470898132668776509`
 
 This guide restores Android-16 (OpenClaw + Qwen2.5-Coder-32B via vLLM) from scratch. Follow in order.
 
@@ -107,7 +108,7 @@ ssh michael@192.168.0.143
 
 mkdir -p ~/.openclaw
 
-# Copy config from this repo
+# Copy config from this repo (includes model, Discord, gateway, plugins)
 # (from your local machine):
 scp configs/openclaw.json michael@192.168.0.143:~/.openclaw/openclaw.json
 
@@ -121,13 +122,21 @@ source ~/.bashrc
 
 **Verify config is correct:**
 ```bash
-python3 -c "import json; c=json.load(open('/home/michael/.openclaw/openclaw.json')); print('baseUrl:', c['models']['providers']['vllm']['baseUrl']); print('model:', c['models']['providers']['vllm']['models'][0]['id'])"
+python3 -c "import json; c=json.load(open('/home/michael/.openclaw/openclaw.json')); print('baseUrl:', c['models']['providers']['vllm']['baseUrl']); print('model:', c['models']['providers']['vllm']['models'][0]['id']); print('discord:', 'token' in c.get('channels',{}).get('discord',{})); print('gateway port:', c.get('gateway',{}).get('port'))"
 # Expected:
 # baseUrl: http://192.168.0.122:8003/v1
 # model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+# discord: True
+# gateway port: 18791
 ```
 
 **Critical:** The baseUrl MUST point to port **8003** (proxy), NOT 8000 (vLLM direct).
+
+The config now includes:
+- `channels.discord` — Bot token, guild `1469753709272764445`, 9 channels
+- `plugins.entries.discord.enabled: true` — Activates Discord plugin
+- `gateway` — Port 18791, LAN binding, auth token
+- `messages.ackReactionScope: "group-mentions"` — Reaction acknowledgment scope
 
 ---
 
@@ -160,7 +169,43 @@ ssh -o BatchMode=yes michael@192.168.0.122 'echo SSH_OK && hostname'
 
 ---
 
-## Step 6: Verify End-to-End
+## Step 6: Restore the Gateway Service on .143
+
+```bash
+# Copy the systemd service file from this repo
+# (from your local machine):
+scp configs/openclaw-gateway.service michael@192.168.0.143:~/.config/systemd/user/openclaw-gateway.service
+
+ssh michael@192.168.0.143
+
+# Reload, enable, and start
+systemctl --user daemon-reload
+systemctl --user enable openclaw-gateway.service
+systemctl --user start openclaw-gateway.service
+
+# Verify
+sleep 3
+systemctl --user status openclaw-gateway.service
+```
+
+**Verify:** You should see:
+- `Active: active (running)`
+- `[discord] starting provider (@Android-16 (Local))`
+- `[discord] logged in to discord as 1470898132668776509`
+- `[gateway] listening on ws://0.0.0.0:18791`
+
+**Note:** "channels unresolved" at startup is normal — resolves within 1-2 seconds.
+
+**Gateway port map (avoid conflicts):**
+| Agent | Port |
+|-------|------|
+| Android-17 | 18789 |
+| Todd | 18790 |
+| Android-16 | 18791 |
+
+---
+
+## Step 7: Verify End-to-End
 
 ```bash
 ssh michael@192.168.0.143
@@ -179,7 +224,16 @@ cat /tmp/restore-test.txt
 VLLM_API_KEY=vllm-local openclaw agent --local --agent main -m 'SSH to 192.168.0.122 and run hostname'
 ```
 
-If all 4 tests pass, the restore is complete.
+If all 4 tests pass, the core restore is complete.
+
+**Test 5: Discord (verify bot is online)**
+```bash
+# Check gateway service is running and Discord logged in
+journalctl --user -u openclaw-gateway.service --since '5 min ago' --no-pager | grep discord
+# Expected: "logged in to discord as 1470898132668776509"
+
+# Then go to Discord and @Android-16 in #android-16 channel — he should respond
+```
 
 ---
 
@@ -246,6 +300,9 @@ rm -rf ~/.openclaw/agents/main/sessions/*.jsonl
 | Python | 3.12.3 | .122: system |
 | Flask | 3.1.2 | .122: pip |
 | Proxy | v4.0 + SSE patch | .122: `/home/michael/vllm-tool-proxy.py` |
+| Gateway service | openclaw-gateway.service | .143: `~/.config/systemd/user/` |
+| Gateway port | 18791 | .143 |
+| Discord bot ID | 1470898132668776509 | Discord |
 | Ubuntu | 24.04 LTS | Both servers |
 | Kernel | 6.17.0-14-generic | Both servers |
 | GPU | RTX PRO 6000 Blackwell (96GB) | .122 |
@@ -261,6 +318,9 @@ rm -rf ~/.openclaw/agents/main/sessions/*.jsonl
 | Models cache | .143 | `~/.openclaw/agents/main/agent/models.json` |
 | SSH key | .143 | `~/.ssh/id_ed25519` |
 | SSH config | .143 | `~/.ssh/config` |
+| Gateway service | .143 | `~/.config/systemd/user/openclaw-gateway.service` |
+| Gateway logs | .143 | `journalctl --user -u openclaw-gateway.service` |
+| Detailed log | .143 | `/tmp/openclaw/openclaw-YYYY-MM-DD.log` |
 | vLLM Docker | .122 | Container: `vllm-coder` |
 | Proxy script | .122 | `/home/michael/vllm-tool-proxy.py` |
 | Proxy log | .122 | `/tmp/vllm-proxy.log` |

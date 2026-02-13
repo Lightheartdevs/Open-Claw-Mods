@@ -1,6 +1,7 @@
-# Live Server Snapshot — 2026-02-13
+# Live Server Snapshot — 2026-02-13 (Updated: Discord Live)
 
-Captured from the running system during stress testing. Use this to verify a restore matches the known-good state.
+Captured from the running system. Use this to verify a restore matches the known-good state.
+**Status:** 88% functional, Discord online as @Android-16 (Local).
 
 ---
 
@@ -21,43 +22,29 @@ Captured from the running system during stress testing. Use this to verify a res
 | npm | 10.9.4 |
 
 ### OpenClaw Config (`~/.openclaw/openclaw.json`)
-```json
-{
-  "models": {
-    "mode": "merge",
-    "providers": {
-      "vllm": {
-        "baseUrl": "http://192.168.0.122:8003/v1",
-        "apiKey": "vllm-local",
-        "api": "openai-completions",
-        "models": [
-          {
-            "id": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-            "name": "Qwen 2.5 Coder 32B",
-            "reasoning": false,
-            "input": ["text"],
-            "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-            "contextWindow": 32768,
-            "maxTokens": 8192,
-            "compat": {
-              "supportsDeveloperRole": false,
-              "supportsStore": false,
-              "maxTokensField": "max_tokens",
-              "supportsReasoningEffort": false
-            }
-          }
-        ]
-      }
-    }
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
-      }
-    }
-  }
-}
+Full config now includes model, Discord, gateway, and plugins. See `configs/openclaw.json` in this repo for the exact file.
+
+Key sections:
+- `models.providers.vllm.baseUrl` → `http://192.168.0.122:8003/v1` (proxy, NOT direct)
+- `channels.discord.token` → Android-16 bot token
+- `channels.discord.guilds.1469753709272764445` → 9 channels configured
+- `gateway.port` → 18791
+- `plugins.entries.discord.enabled` → true
+
+### Gateway Service
+- **Service:** `openclaw-gateway.service` (systemd user service)
+- **Status:** active (running), enabled (starts on boot)
+- **Port:** 18791 (ws://0.0.0.0:18791)
+- **Agent model:** `vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ`
+- **Discord:** logged in as `1470898132668776509` (@Android-16 (Local))
+- **Service file:** `~/.config/systemd/user/openclaw-gateway.service`
+
+Startup log output:
+```
+[gateway] agent model: vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+[gateway] listening on ws://0.0.0.0:18791
+[discord] starting provider (@Android-16 (Local))
+[discord] logged in to discord as 1470898132668776509
 ```
 
 ### Workspace Files (`~/.openclaw/workspace/`)
@@ -66,6 +53,7 @@ AGENTS.md
 BOOTSTRAP.md
 HEARTBEAT.md
 IDENTITY.md
+MEMORY.md
 SOUL.md
 TOOLS.md
 USER.md
@@ -176,8 +164,12 @@ dream-cadvisor          Up 25 hours (healthy)
 # On .143:
 openclaw --version                                    # 2026.2.12
 node --version                                        # v22.22.0
-cat ~/.openclaw/openclaw.json | python3 -m json.tool  # Should match above
+python3 -c "import json; c=json.load(open('/home/michael/.openclaw/openclaw.json')); print('baseUrl:', c['models']['providers']['vllm']['baseUrl']); print('discord:', 'token' in c.get('channels',{}).get('discord',{})); print('gateway:', c.get('gateway',{}).get('port'))"
+# Expected: baseUrl: http://192.168.0.122:8003/v1 | discord: True | gateway: 18791
 ssh -o BatchMode=yes michael@192.168.0.122 'echo OK'  # Should print OK
+systemctl --user status openclaw-gateway.service       # Should be active (running)
+journalctl --user -u openclaw-gateway.service --since '1 hour ago' --no-pager | grep 'logged in to discord'
+# Expected: [discord] logged in to discord as 1470898132668776509
 
 # On .122:
 docker inspect vllm-coder --format '{{.Config.Image}}'   # vllm/vllm-openai:v0.14.0

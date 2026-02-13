@@ -5,6 +5,8 @@
 **Model:** Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
 **Inference Server:** vLLM v0.14.0 (Docker)
 **Proxy:** vllm-tool-proxy.py v4 + SSE patch
+**Discord:** Online as @Android-16 (Local) — bot ID `1470898132668776509`
+**Gateway:** Port 18791 on .143 (systemd: `openclaw-gateway.service`)
 **Last Tested:** 2026-02-13 — **88% functional** (20/26 tests pass)
 
 ## Overview
@@ -101,7 +103,8 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 
 | File | Server | Purpose |
 |------|--------|---------|
-| `configs/openclaw.json` | .143: `~/.openclaw/openclaw.json` | OpenClaw configuration with vLLM provider |
+| `configs/openclaw.json` | .143: `~/.openclaw/openclaw.json` | OpenClaw config (model, Discord, gateway, plugins) |
+| `configs/openclaw-gateway.service` | .143: `~/.config/systemd/user/openclaw-gateway.service` | Systemd user service for Android-16 gateway |
 | `proxy/vllm-tool-proxy.py` | .122: `/home/michael/vllm-tool-proxy.py` | Tool call extraction proxy with SSE re-wrapping |
 | `proxy/proxy-patch.py` | .122: `/tmp/proxy-patch.py` | Script that adds SSE re-wrapping to the proxy |
 | `scripts/start-proxy.sh` | .122 | Start the proxy as a background service |
@@ -162,6 +165,37 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 4. **Context window** -- 32K total, ~8-10K consumed by system prompt + 23 tools
 5. **No vision/image support** -- AWQ quantized model is text-only
 6. **Token leak (`<|im_start|>`)** -- appears in ~30% of multi-step responses, usually non-fatal
+
+## Discord Integration
+
+Android-16 has a live Discord presence via OpenClaw's built-in Discord plugin. He shows up as **@Android-16 (Local)** in the server.
+
+### How It Works
+- OpenClaw's `channels.discord` config section connects the bot to Discord using a bot token
+- The `plugins.entries.discord.enabled: true` flag activates the Discord plugin
+- The gateway runs as a systemd user service (`openclaw-gateway.service`) on port 18791
+- When someone messages in a channel he's configured for, OpenClaw routes it to the Qwen model and posts the response back
+
+### Channel Behavior
+| Channel | Behavior |
+|---------|----------|
+| `#android-16` | Listens to ALL messages (no @mention needed) |
+| All other channels | Only responds when `@Android-16` is mentioned |
+
+### Key Discord IDs
+| Entity | ID |
+|--------|-----|
+| Android-16 bot | `1470898132668776509` |
+| Guild (server) | `1469753709272764445` |
+| #android-16 | `1470931716041478147` |
+| #general | `1469753710908276819` |
+
+### Gotchas Learned During Setup
+1. **`NO_REPLY` responses** — The model sometimes decides a message doesn't need a response, especially on first contact or vague pings. A direct question or @mention gets a response.
+2. **"channels unresolved" at startup** — Normal. Channels resolve after the Discord gateway finishes caching (~1-2 seconds after login). Check the log for `logged in to discord as` to confirm success.
+3. **Service file matters** — The systemd service must set `HOME=/home/michael` so OpenClaw reads `~/.openclaw/openclaw.json`. Without this, it won't find the config.
+4. **Gateway port conflicts** — Todd uses 18790, Android-17 uses 18789. Android-16 uses **18791**. Never overlap.
+5. **Token in config** — The Discord bot token lives in `openclaw.json` under `channels.discord.token`. If you regenerate the token in Discord Developer Portal, update both the live config on .143 AND this repo.
 
 ## Quick Start
 

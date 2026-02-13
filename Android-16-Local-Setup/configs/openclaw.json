@@ -32,5 +32,49 @@
         "primary": "vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
       }
     }
+  },
+  "channels": {
+    "discord": {
+      "token": "MTQ3MDg5ODEzMjY2ODc3NjUwOQ.GXgTnE.NDLc2jKaGZ95dBrGZ5hNodvXJpHEURNoMOO9eI",
+      "allowBots": true,
+      "groupPolicy": "allowlist",
+      "dmHistoryLimit": 30,
+      "guilds": {
+        "1469753709272764445": {
+          "channels": {
+            "1469753710908276819": { "allow": true, "requireMention": true },
+            "1470931716041478147": { "allow": true, "requireMention": false },
+            "1469778462335172692": { "allow": true, "requireMention": true },
+            "1469778463773692000": { "allow": true, "requireMention": true },
+            "1469779287866347745": { "allow": true, "requireMention": true },
+            "1469779288927764574": { "allow": true, "requireMention": true },
+            "1469779290525663365": { "allow": true, "requireMention": true },
+            "1469779291205013616": { "allow": true, "requireMention": true },
+            "1469779291846869013": { "allow": true, "requireMention": true }
+          }
+        }
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "gateway": {
+    "port": 18791,
+    "mode": "local",
+    "bind": "lan",
+    "controlUi": {
+      "allowInsecureAuth": true
+    },
+    "auth": {
+      "token": "openclaw2026"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "discord": {
+        "enabled": true
+      }
+    }
   }
 }

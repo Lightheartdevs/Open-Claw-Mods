@@ -198,6 +198,7 @@ The repo is my long-term memory. **Write discoveries there, not here.**
 | Channel | ID |
 |---------|-----|
 | #general | 1469753710908276819 |
+| #android-16 | 1470931716041478147 |
 | #android-17 | 1469778462335172692 |
 | #todd | 1469778463773692000 |
 | #discoveries | 1469779287866347745 |
