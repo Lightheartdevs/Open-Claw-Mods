@@ -5,8 +5,8 @@
 OpenClaw cannot talk directly to vLLM for tool-calling tasks because of three incompatibilities:
 
 1. **OpenClaw always streams** (`stream: true`) but tool call extraction requires seeing the full response
-2. **Qwen2.5 outputs tool calls as text** in `<tools>` tags instead of OpenAI's structured `tool_calls` format
-3. **vLLM's hermes parser** doesn't catch Qwen2.5-AWQ's tool call output format
+2. **Models may output tool calls as text** in `<tools>` tags instead of OpenAI's structured `tool_calls` format (less likely with Qwen3-Coder-Next which has native tool calling via `qwen3_coder` parser, but the safety net remains)
+3. **Response cleaning** — vLLM returns extra fields that OpenClaw doesn't expect
 
 The proxy sits between OpenClaw and vLLM, fixing all three issues transparently.
 

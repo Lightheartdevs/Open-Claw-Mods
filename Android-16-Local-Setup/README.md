@@ -1,17 +1,34 @@
-# Android-16 Local Setup: OpenClaw + Qwen2.5 via vLLM
+# Android-16 Local Setup: OpenClaw + Qwen3-Coder-Next via vLLM
 
 **Instance:** Android-16
 **OpenClaw Version:** 2026.2.12
-**Model:** Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
-**Inference Server:** vLLM v0.14.0 (Docker)
+**Model:** Qwen/Qwen3-Coder-Next-FP8 (80B total / 3B active, MoE)
+**Previous Model:** Qwen/Qwen2.5-Coder-32B-Instruct-AWQ (retired 2026-02-13)
+**Inference Server:** vLLM v0.15.1 (Docker)
 **Proxy:** vllm-tool-proxy.py v4 + SSE patch
 **Discord:** Online as @Android-16 (Local) — bot ID `1470898132668776509`
 **Gateway:** Port 18791 on .143 (systemd: `openclaw-gateway.service`)
-**Last Tested:** 2026-02-13 — **88% functional** (20/26 tests pass)
+**Last Tested:** 2026-02-13 — model swap verified, Discord reconnected
 
 ## Overview
 
-This setup runs OpenClaw with a **locally hosted** Qwen2.5-Coder-32B model served via vLLM, instead of cloud-based Anthropic/OpenAI models. This required solving five distinct compatibility issues between OpenClaw's internals and local model serving.
+This setup runs OpenClaw with a **locally hosted** Qwen3-Coder-Next-FP8 model served via vLLM, instead of cloud-based Anthropic/OpenAI models. This required solving five distinct compatibility issues between OpenClaw's internals and local model serving.
+
+## Model Upgrade History
+
+| Date | Model | Params | Context | Notes |
+|------|-------|--------|---------|-------|
+| 2026-02-09 | Qwen2.5-Coder-32B-Instruct-AWQ | 32B dense | 32K | Initial setup, 88% functional |
+| 2026-02-13 | **Qwen3-Coder-Next-FP8** | 80B total / 3B active (MoE) | **128K** | Brain upgrade, native tool calling |
+
+### Why Qwen3-Coder-Next?
+- **80B total parameters** with only 3B active per token (sparse MoE + hybrid DeltaNet attention)
+- **70.6% on SWE-Bench Verified** — purpose-built for agentic coding
+- **128K context window** (4x improvement over 32B model's 32K)
+- **Native `qwen3_coder` tool call parser** in vLLM — no more relying on hermes parser
+- **Hybrid DeltaNet architecture** — only 12/48 layers use standard KV cache, so context scaling is nearly free (~6GB for 256K context)
+- **FP8 quantization** fits on a single 96GB GPU (~75GB model weights, ~16GB for KV cache)
+- Non-thinking mode only (no `<think>` blocks), Apache 2.0 license, 370 programming languages
 
 ## Architecture
 
@@ -47,12 +64,14 @@ This setup runs OpenClaw with a **locally hosted** Qwen2.5-Coder-32B model serve
 │                       │ HTTP (stream: false)                    │
 │                       ▼                                         │
 │  ┌───────────────────────────────────────────────┐              │
-│  │  vLLM v0.14.0 (Docker: vllm-coder) (:8000)   │              │
-│  │  ├── Model: Qwen2.5-Coder-32B-Instruct-AWQ   │              │
+│  │  vLLM v0.15.1 (Docker: vllm-coder) (:8000)   │              │
+│  │  ├── Model: Qwen3-Coder-Next-FP8 (80B MoE)   │              │
 │  │  ├── --enable-auto-tool-choice                │              │
-│  │  ├── --tool-call-parser hermes                │              │
-│  │  ├── --gpu-memory-utilization 0.90            │              │
-│  │  └── --max-model-len 32768                    │              │
+│  │  ├── --tool-call-parser qwen3_coder           │              │
+│  │  ├── --gpu-memory-utilization 0.92            │              │
+│  │  ├── --max-model-len 131072                   │              │
+│  │  └── --compilation_config.cudagraph_mode=     │              │
+│  │       PIECEWISE                               │              │
 │  └───────────────────────────────────────────────┘              │
 │                                                                 │
 │  GPU: NVIDIA RTX PRO 6000 Blackwell (96GB VRAM)                │
@@ -72,6 +91,8 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 **Problem:** Qwen2.5-Coder outputs tool calls in `<tools>JSON</tools>` format or as bare JSON in the `content` field. vLLM's hermes parser doesn't catch this format, so tool calls arrive as plain text instead of structured `tool_calls` array.
 
 **Fix:** The proxy's `extract_tools_from_content()` parses `<tools>` tags, bare JSON objects, and multi-line JSON from the content field and converts them to proper `tool_calls` entries.
+
+**Note (post-upgrade):** Qwen3-Coder-Next has native tool calling with the `qwen3_coder` parser in vLLM v0.15.1. The proxy's extraction logic is now a safety net fallback rather than the primary mechanism.
 
 ### 3. Unsupported API Parameters
 **Problem:** OpenClaw's default compat settings send parameters that vLLM rejects:
@@ -93,6 +114,8 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 **Problem:** Qwen2.5 can get stuck in repetitive loops when handling complex multi-step tool chains, repeatedly emitting the same tool call JSON with `<|im_start|>` tokens leaking into the output.
 
 **Fix:** The proxy enforces `MAX_TOOL_CALLS = 20` -- after 20 tool result messages in a conversation, it returns a stop message instead of forwarding to vLLM. This prevents runaway token consumption.
+
+**Note (post-upgrade):** Qwen3-Coder-Next was trained with Agent RL specifically for long-horizon tool use and failure recovery. The `<|im_start|>` token leak should be eliminated (different tokenizer). Loop protection remains as a safety net.
 
 ### 5. Config Schema Validation
 **Problem:** Several community-suggested compat fields (`supportsStrictMode`, `supportedParameters`, `streaming`, `fallback`) are not in OpenClaw v2026.2.12's config schema and cause validation errors on startup.
@@ -122,9 +145,9 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 | `SNAPSHOT.md` | Live server state capture for verifying a restore |
 | `SSH-SETUP.md` | How key-based SSH auth was configured |
 
-## Stress Test Results (Latest: Round 2, 2026-02-13)
+## Stress Test Results
 
-### What Works
+### Pre-Upgrade (Qwen2.5-Coder-32B, Round 2, 2026-02-13): 88% (20/26)
 
 | Category | Tests | Success Rate |
 |----------|-------|-------------|
@@ -136,35 +159,31 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 | Git operations | 1/1 | 100% |
 | System diagnostics | 1/1 | 100% |
 
-### What Partially Works
+Partial: 4-step numbered chains (planning loops), bug find+fix (token leak)
+Failed: Multi-file edit (model used `write` instead of `edit`)
 
-| Test | Issue |
-|------|-------|
-| 4-step numbered chain | Planning loop on numbered step lists |
-| Bug finding + fixing | Correctly identifies bugs but token leak blocks the fix |
+### Post-Upgrade (Qwen3-Coder-Next-FP8): Pending Re-Test
 
-### What Fails
+The model swap was verified working (API responds, Discord reconnected, basic generation confirmed). Full stress test suite needs to be re-run to establish the new baseline. Expected improvements:
+- Multi-file editing (80B model with agentic training should follow tool schemas better)
+- No more `<|im_start|>` token leaks (different tokenizer/architecture)
+- Better numbered step handling (trained for long-horizon agentic reasoning)
+- 4x larger context window (128K vs 32K)
 
-| Test | Issue |
-|------|-------|
-| Multi-file edit (add content) | Model uses `write` (overwrite) instead of `edit` |
+## Known Limitations (Post-Upgrade)
 
-### Key Improvements Over Initial Tests
+1. **No vision/image support** -- FP8 model is text-only
+2. **vLLM v0.15.1 quirks** -- `--kv-cache-dtype fp8` causes assertion errors with Qwen3-Next architecture (do NOT use it)
+3. **Missing MoE config** -- vLLM warns about missing optimized MoE config for RTX PRO 6000 Blackwell; uses defaults (functional but may not be peak performance)
+4. **PIECEWISE cudagraph required** -- `--compilation_config.cudagraph_mode=PIECEWISE` prevents CUDA memory access errors
+5. **Proxy still needed** -- even with native tool calling, the SSE re-wrapping and response cleaning are still required for OpenClaw compatibility
+6. **Context vs VRAM** -- 128K set currently; could push to 256K (only ~6GB KV cache due to hybrid DeltaNet) but needs testing
 
-1. **SSH now works** -- key-based auth from .143 to .122
-2. **6-step chains now pass** -- previously failed with repetition loops
-3. **8 and 10-step chains pass** -- significant multi-step reliability
-4. **Cross-server workflows work** -- SSH + nvidia-smi, docker ps, remote diagnostics
-5. **Git operations work** -- including self-correction on missing git config
-
-## Known Limitations
-
-1. **Multi-file editing** -- model uses `write` (overwrite) instead of `edit` (modify) when adding new content to existing files
-2. **Complex reasoning + tool execution** -- `<|im_start|>` token leak can corrupt tool calls mid-thought
-3. **Numbered step lists** -- "do step 1, step 2, ..." triggers planning loops; natural language descriptions work better
-4. **Context window** -- 32K total, ~8-10K consumed by system prompt + 23 tools
-5. **No vision/image support** -- AWQ quantized model is text-only
-6. **Token leak (`<|im_start|>`)** -- appears in ~30% of multi-step responses, usually non-fatal
+### Resolved Limitations (from 32B era)
+- ~~Multi-file editing~~ — Expected fixed (larger model, agentic training)
+- ~~`<|im_start|>` token leak~~ — Different tokenizer, should be eliminated
+- ~~Numbered step planning loops~~ — Trained for long-horizon reasoning
+- ~~32K context window~~ — Now 128K (4x improvement)
 
 ## Discord Integration
 

@@ -1,7 +1,7 @@
-# Live Server Snapshot — 2026-02-13 (Updated: Discord Live)
+# Live Server Snapshot — 2026-02-13 (Updated: Qwen3-Coder-Next Brain Upgrade)
 
 Captured from the running system. Use this to verify a restore matches the known-good state.
-**Status:** 88% functional, Discord online as @Android-16 (Local).
+**Status:** Model upgraded to Qwen3-Coder-Next-FP8 (80B MoE), Discord online as @Android-16 (Local).
 
 ---
 
@@ -35,13 +35,13 @@ Key sections:
 - **Service:** `openclaw-gateway.service` (systemd user service)
 - **Status:** active (running), enabled (starts on boot)
 - **Port:** 18791 (ws://0.0.0.0:18791)
-- **Agent model:** `vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ`
+- **Agent model:** `vllm/Qwen/Qwen3-Coder-Next-FP8`
 - **Discord:** logged in as `1470898132668776509` (@Android-16 (Local))
 - **Service file:** `~/.config/systemd/user/openclaw-gateway.service`
 
 Startup log output:
 ```
-[gateway] agent model: vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+[gateway] agent model: vllm/Qwen/Qwen3-Coder-Next-FP8
 [gateway] listening on ws://0.0.0.0:18791
 [discord] starting provider (@Android-16 (Local))
 [discord] logged in to discord as 1470898132668776509
@@ -95,10 +95,10 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoNSurTyWzlS4RyWQTQOzLy/hxcni6G4wohrShV8j3c
 
 ### GPU
 - **Model:** NVIDIA RTX PRO 6000 Blackwell
-- **VRAM:** 97887 MiB total, 89375 MiB used (~91%)
-- **Temperature:** 67 C
-- **Power:** 305W / 600W cap
-- **Utilization:** 100% (model loaded and serving)
+- **VRAM:** 97887 MiB total, 91105 MiB used (~93%)
+- **Temperature:** 35 C (idle)
+- **Power:** 15W idle / 600W cap
+- **Utilization:** 0% idle (spikes during inference)
 
 ### Software Versions
 | Component | Version |
@@ -109,20 +109,25 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoNSurTyWzlS4RyWQTQOzLy/hxcni6G4wohrShV8j3c
 
 ### vLLM Container
 - **Name:** `vllm-coder`
-- **Image:** `vllm/vllm-openai:v0.14.0`
-- **Status:** running (started 2026-02-12T19:04:55Z)
+- **Image:** `vllm/vllm-openai:v0.15.1`
+- **Status:** running (started 2026-02-13)
+- **Model memory:** 74.89 GiB for weights, loaded in ~28 seconds
 - **Command args:**
   ```
-  --model Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+  --model Qwen/Qwen3-Coder-Next-FP8
   --port 8000
-  --gpu-memory-utilization 0.90
-  --max-model-len 32768
+  --gpu-memory-utilization 0.92
+  --max-model-len 131072
   --enable-auto-tool-choice
-  --tool-call-parser hermes
+  --tool-call-parser qwen3_coder
   --tensor-parallel-size 1
+  --compilation_config.cudagraph_mode=PIECEWISE
   ```
 - **Port:** 8000 (internal, accessible from LAN)
-- **Model weights:** `~/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-32B-Instruct-AWQ/`
+- **Model weights:** `~/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/`
+- **Architecture:** Qwen3NextForCausalLM (hybrid DeltaNet + MoE, 80B total / 3B active)
+- **Backends:** TRITON Fp8 MoE, FLASHINFER attention
+- **Known warning:** Missing optimized MoE config for RTX PRO 6000 Blackwell (uses defaults, functional)
 
 ### Proxy Process
 - **Script:** `/home/michael/vllm-tool-proxy.py`
@@ -172,8 +177,8 @@ journalctl --user -u openclaw-gateway.service --since '1 hour ago' --no-pager | 
 # Expected: [discord] logged in to discord as 1470898132668776509
 
 # On .122:
-docker inspect vllm-coder --format '{{.Config.Image}}'   # vllm/vllm-openai:v0.14.0
-curl -s http://localhost:8000/v1/models | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"][0]["id"])'  # Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+docker inspect vllm-coder --format '{{.Config.Image}}'   # vllm/vllm-openai:v0.15.1
+curl -s http://localhost:8000/v1/models | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"][0]["id"])'  # Qwen/Qwen3-Coder-Next-FP8
 curl -s http://localhost:8003/health | python3 -m json.tool  # status: ok, version: v4
 python3 --version   # 3.12.3
 python3 -c 'import flask; print(flask.__version__)'  # 3.1.2

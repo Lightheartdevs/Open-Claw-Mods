@@ -74,7 +74,7 @@ Client receives SSE stream  ←  Proxy sends SSE with proper format
 
 ## Tool Call Extraction Pipeline
 
-Qwen2.5-Coder doesn't use OpenAI's native `tool_calls` format. Instead it outputs tool calls in the `content` field in various formats:
+Qwen3-Coder-Next doesn't use OpenAI's native `tool_calls` format. Instead it outputs tool calls in the `content` field in various formats:
 
 ### Format 1: `<tools>` tags
 ```
@@ -137,7 +137,7 @@ discord-auto-reply module routes to agent
        ↓
 Agent session created on lane: session:agent:main:discord:channel:<id>
        ↓
-Request sent to vLLM via proxy (provider=vllm, model=Qwen2.5-Coder-32B)
+Request sent to vLLM via proxy (provider=vllm, model=Qwen3-Coder-Next-FP8 80B MoE)
        ↓
 Model response received
        ↓
@@ -163,7 +163,7 @@ systemd (openclaw-gateway.service)
        │    ├─ Listens on 9 channels
        │    └─ Routes messages to agent sessions
        ├─ Agent runner (embedded pi-agent)
-       │    ├─ Qwen2.5-Coder-32B via vLLM proxy
+       │    ├─ Qwen3-Coder-Next-FP8 (80B MoE) via vLLM v0.15.1 proxy
        │    └─ 23 built-in tools
        ├─ Heartbeat (periodic health check)
        ├─ Cron scheduler (jobs.json)

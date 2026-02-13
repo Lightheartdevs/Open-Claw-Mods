@@ -1,10 +1,10 @@
 # Disaster Recovery & Restore Guide
 
 **Last verified working state:** 2026-02-13
-**Score:** 88% functional (20/26 tests pass, 3 partial, 3 fail)
+**Model:** Qwen3-Coder-Next-FP8 (80B MoE, upgraded from Qwen2.5-Coder-32B)
 **Discord:** Online as @Android-16 (Local), bot ID `1470898132668776509`
 
-This guide restores Android-16 (OpenClaw + Qwen2.5-Coder-32B via vLLM) from scratch. Follow in order.
+This guide restores Android-16 (OpenClaw + Qwen3-Coder-Next-FP8 via vLLM) from scratch. Follow in order.
 
 ---
 
@@ -23,35 +23,41 @@ Hardware on .122: NVIDIA RTX PRO 6000 Blackwell (96GB VRAM)
 ```bash
 ssh michael@192.168.0.122
 
-# Pull the model (skip if already cached)
-# Model lives at ~/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-32B-Instruct-AWQ/
-docker pull vllm/vllm-openai:v0.14.0
+# Pull the model (skip if already cached at ~/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/)
+# If not cached, vLLM will auto-download on first start (~80GB)
+docker pull vllm/vllm-openai:v0.15.1
 
 # Start vLLM
 docker run -d \
   --name vllm-coder \
-  --runtime nvidia \
   --gpus all \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  --shm-size 16g \
   -p 8000:8000 \
-  --ipc=host \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
   --restart unless-stopped \
-  vllm/vllm-openai:v0.14.0 \
-  --model Qwen/Qwen2.5-Coder-32B-Instruct-AWQ \
+  vllm/vllm-openai:v0.15.1 \
+  --model Qwen/Qwen3-Coder-Next-FP8 \
   --port 8000 \
-  --gpu-memory-utilization 0.90 \
-  --max-model-len 32768 \
+  --gpu-memory-utilization 0.92 \
+  --max-model-len 131072 \
   --enable-auto-tool-choice \
-  --tool-call-parser hermes \
-  --tensor-parallel-size 1
+  --tool-call-parser qwen3_coder \
+  --tensor-parallel-size 1 \
+  --compilation_config.cudagraph_mode=PIECEWISE
 
-# Wait for startup (~60-90 seconds)
+# Wait for startup (~60-90 seconds for model loading + CUDA graph compilation)
 until curl -s http://localhost:8000/v1/models > /dev/null 2>&1; do sleep 5; echo "waiting..."; done
 echo "vLLM ready"
 curl -s http://localhost:8000/v1/models | python3 -m json.tool
 ```
 
-**Verify:** You should see `Qwen/Qwen2.5-Coder-32B-Instruct-AWQ` in the model list.
+**CRITICAL FLAGS:**
+- `--tool-call-parser qwen3_coder` (NOT hermes — this model has its own native parser)
+- `--compilation_config.cudagraph_mode=PIECEWISE` (prevents CUDA memory errors with DeltaNet layers)
+- Do **NOT** use `--kv-cache-dtype fp8` (causes assertion errors with Qwen3-Next architecture)
+- `--gpu-memory-utilization 0.92` (0.95 can crash; 0.90 wastes VRAM)
+
+**Verify:** You should see `Qwen/Qwen3-Coder-Next-FP8` in the model list.
 
 ---
 
@@ -125,7 +131,7 @@ source ~/.bashrc
 python3 -c "import json; c=json.load(open('/home/michael/.openclaw/openclaw.json')); print('baseUrl:', c['models']['providers']['vllm']['baseUrl']); print('model:', c['models']['providers']['vllm']['models'][0]['id']); print('discord:', 'token' in c.get('channels',{}).get('discord',{})); print('gateway port:', c.get('gateway',{}).get('port'))"
 # Expected:
 # baseUrl: http://192.168.0.122:8003/v1
-# model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+# model: Qwen/Qwen3-Coder-Next-FP8
 # discord: True
 # gateway port: 18791
 ```
@@ -245,7 +251,7 @@ The SSE re-wrapping isn't working. Check:
 # Test proxy directly
 curl -X POST http://192.168.0.122:8003/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2.5-Coder-32B-Instruct-AWQ","messages":[{"role":"user","content":"hi"}],"stream":true}'
+  -d '{"model":"Qwen/Qwen3-Coder-Next-FP8","messages":[{"role":"user","content":"hi"}],"stream":true}'
 # Should return: data: {...}\n\n chunks ending with data: [DONE]
 ```
 
@@ -295,8 +301,8 @@ rm -rf ~/.openclaw/agents/main/sessions/*.jsonl
 |-----------|---------|----------|
 | OpenClaw | 2026.2.12 | .143: `/usr/bin/openclaw` |
 | Node.js | 22.22.0 | .143: system-wide |
-| vLLM | 0.14.0 | .122: Docker `vllm/vllm-openai:v0.14.0` |
-| Model | Qwen/Qwen2.5-Coder-32B-Instruct-AWQ | .122: `~/.cache/huggingface/` |
+| vLLM | 0.15.1 | .122: Docker `vllm/vllm-openai:v0.15.1` |
+| Model | Qwen/Qwen3-Coder-Next-FP8 (80B MoE) | .122: `~/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/` |
 | Python | 3.12.3 | .122: system |
 | Flask | 3.1.2 | .122: pip |
 | Proxy | v4.0 + SSE patch | .122: `/home/michael/vllm-tool-proxy.py` |
@@ -324,4 +330,4 @@ rm -rf ~/.openclaw/agents/main/sessions/*.jsonl
 | vLLM Docker | .122 | Container: `vllm-coder` |
 | Proxy script | .122 | `/home/michael/vllm-tool-proxy.py` |
 | Proxy log | .122 | `/tmp/vllm-proxy.log` |
-| Model weights | .122 | `~/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-32B-Instruct-AWQ/` |
+| Model weights | .122 | `~/.cache/huggingface/hub/models--Qwen--Qwen3-Coder-Next-FP8/` |

@@ -12,7 +12,7 @@
 - Ubuntu 24.04 LTS
 - Python 3.12+ with Flask 3.1+
 - Docker with NVIDIA GPU runtime
-- GPU with >= 24GB VRAM (for AWQ 4-bit, 32B model)
+- GPU with >= 96GB VRAM (for Qwen3-Coder-Next-FP8, ~75GB model weights)
 - Ports 8000 (vLLM) and 8003 (proxy) accessible from .143
 
 ## Step 1: Start vLLM (on .122)
@@ -21,27 +21,35 @@ Using Docker (recommended):
 ```bash
 docker run -d \
   --name vllm-coder \
-  --runtime nvidia \
   --gpus all \
-  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  --shm-size 16g \
   -p 8000:8000 \
-  --ipc=host \
-  vllm/vllm-openai:v0.14.0 \
-  --model Qwen/Qwen2.5-Coder-32B-Instruct-AWQ \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  vllm/vllm-openai:v0.15.1 \
+  --model Qwen/Qwen3-Coder-Next-FP8 \
   --port 8000 \
-  --gpu-memory-utilization 0.90 \
-  --max-model-len 32768 \
+  --gpu-memory-utilization 0.92 \
+  --max-model-len 131072 \
   --enable-auto-tool-choice \
-  --tool-call-parser hermes \
-  --tensor-parallel-size 1
+  --tool-call-parser qwen3_coder \
+  --tensor-parallel-size 1 \
+  --compilation_config.cudagraph_mode=PIECEWISE
 ```
 
-Verify it's running:
+**Important flags:**
+- `--tool-call-parser qwen3_coder` — native tool calling parser for this model (NOT hermes)
+- `--compilation_config.cudagraph_mode=PIECEWISE` — prevents CUDA memory access errors with hybrid DeltaNet
+- `--gpu-memory-utilization 0.92` — 0.95 can cause crashes, 0.92 is safe
+- `--max-model-len 131072` — 128K context; can try 262144 (256K) if needed
+- Do **NOT** use `--kv-cache-dtype fp8` — causes assertion errors with Qwen3-Next architecture
+
+Verify it's running (model takes ~60-90 seconds to load):
 ```bash
+until curl -s http://localhost:8000/v1/models > /dev/null 2>&1; do sleep 5; echo "waiting..."; done
 curl http://localhost:8000/v1/models
 ```
 
-You should see the model listed.
+You should see `Qwen/Qwen3-Coder-Next-FP8` in the model list.
 
 ## Step 2: Deploy the Proxy (on .122)
 
@@ -131,10 +139,12 @@ systemctl --user status openclaw-gateway.service
 
 You should see:
 - `Active: active (running)`
-- `[gateway] agent model: vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ`
+- `[gateway] agent model: vllm/Qwen/Qwen3-Coder-Next-FP8`
 - `[discord] starting provider (@Android-16 (Local))`
 - `[discord] logged in to discord as 1470898132668776509`
 - `[gateway] listening on ws://0.0.0.0:18791`
+
+**Note:** "channels unresolved" at startup is normal — they resolve within 1-2 seconds after Discord login.
 
 **Note:** "channels unresolved" at startup is normal — they resolve within 1-2 seconds after Discord login.
 
@@ -155,7 +165,7 @@ You should see:
 Check agent configuration:
 ```bash
 openclaw agents list
-# Should show: Model: vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+# Should show: Model: vllm/Qwen/Qwen3-Coder-Next-FP8
 ```
 
 Run a simple test:
@@ -174,7 +184,7 @@ If both return sensible output, the setup is working.
 
 ### "No reply from agent" with 0 tokens
 - **Cause:** SSE re-wrapping not working. The proxy is returning non-streaming JSON but OpenClaw expects SSE.
-- **Check:** `curl -X POST http://192.168.0.122:8003/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"Qwen/Qwen2.5-Coder-32B-Instruct-AWQ","messages":[{"role":"user","content":"hi"}],"stream":true}'`
+- **Check:** `curl -X POST http://192.168.0.122:8003/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"Qwen/Qwen3-Coder-Next-FP8","messages":[{"role":"user","content":"hi"}],"stream":true}'`
 - **Expected:** You should see `data: {...}\n\n` SSE chunks, ending with `data: [DONE]`
 
 ### Config validation errors on startup
@@ -186,8 +196,16 @@ If both return sensible output, the setup is working.
 - **Check:** Verify `baseUrl` in openclaw.json points to port 8003 (proxy), not 8000 (vLLM)
 
 ### Agent gets stuck in repetition loop
-- **Cause:** Qwen2.5 limitation with complex multi-step tool chains
+- **Cause:** Model limitation with complex multi-step tool chains (much less likely with Qwen3-Coder-Next)
 - **Mitigation:** The proxy's MAX_TOOL_CALLS=20 eventually stops it. Keep prompts simple and single-action when possible.
+
+### vLLM crashes with assertion error on startup
+- **Cause:** Using `--kv-cache-dtype fp8` with Qwen3-Next architecture
+- **Fix:** Do NOT use `--kv-cache-dtype fp8`. The FP8 model weights are fine, but FP8 KV cache is not supported for this architecture.
+
+### vLLM crashes with CUDA illegal memory access
+- **Cause:** Default cudagraph mode is incompatible with hybrid DeltaNet layers
+- **Fix:** Add `--compilation_config.cudagraph_mode=PIECEWISE` to the docker run command
 
 ### vLLM rejects `store` parameter
 - **Cause:** Missing `"supportsStore": false` in compat

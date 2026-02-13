@@ -8,13 +8,13 @@
         "api": "openai-completions",
         "models": [
           {
-            "id": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-            "name": "Qwen 2.5 Coder 32B",
+            "id": "Qwen/Qwen3-Coder-Next-FP8",
+            "name": "Qwen3 Coder Next 80B",
             "reasoning": false,
             "input": ["text"],
             "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-            "contextWindow": 32768,
-            "maxTokens": 8192,
+            "contextWindow": 131072,
+            "maxTokens": 65536,
             "compat": {
               "supportsDeveloperRole": false,
               "supportsStore": false,
@@ -29,7 +29,7 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "vllm/Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
+        "primary": "vllm/Qwen/Qwen3-Coder-Next-FP8"
       }
     }
   },
