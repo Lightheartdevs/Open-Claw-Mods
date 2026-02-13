@@ -8,7 +8,7 @@
 **Proxy:** vllm-tool-proxy.py v4 + SSE patch
 **Discord:** Online as @Android-16 (Local) — bot ID `1470898132668776509`
 **Gateway:** Port 18791 on .143 (systemd: `openclaw-gateway.service`)
-**Last Tested:** 2026-02-13 — model swap verified, Discord reconnected
+**Last Tested:** 2026-02-13 — **100% pass rate (26/26)** on full stress test suite
 
 ## Overview
 
@@ -140,14 +140,14 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 | `ARCHITECTURE.md` | Deep dive into OpenClaw internals and the tool extraction pipeline |
 | `DEPLOYMENT.md` | Step-by-step deployment from scratch |
 | `PROXY-EXPLAINED.md` | How the proxy works, request flow, key functions |
-| `STRESS-TESTS.md` | Full test results — 26 tests across 2 rounds |
+| `STRESS-TESTS.md` | Full test results — 31 tests across 3 rounds (100% on original 26) |
 | `RESTORE.md` | Disaster recovery — how to rebuild from scratch |
 | `SNAPSHOT.md` | Live server state capture for verifying a restore |
 | `SSH-SETUP.md` | How key-based SSH auth was configured |
 
 ## Stress Test Results
 
-### Pre-Upgrade (Qwen2.5-Coder-32B, Round 2, 2026-02-13): 88% (20/26)
+### Pre-Upgrade (Qwen2.5-Coder-32B, Rounds 1-2): 88% functional (20/26)
 
 | Category | Tests | Success Rate |
 |----------|-------|-------------|
@@ -162,13 +162,23 @@ When OpenClaw tries to use a local model out-of-the-box, it fails at five distin
 Partial: 4-step numbered chains (planning loops), bug find+fix (token leak)
 Failed: Multi-file edit (model used `write` instead of `edit`)
 
-### Post-Upgrade (Qwen3-Coder-Next-FP8): Pending Re-Test
+### Post-Upgrade (Qwen3-Coder-Next-FP8, Round 3): 100% (26/26) + 4/5 new tests
 
-The model swap was verified working (API responds, Discord reconnected, basic generation confirmed). Full stress test suite needs to be re-run to establish the new baseline. Expected improvements:
-- Multi-file editing (80B model with agentic training should follow tool schemas better)
-- No more `<|im_start|>` token leaks (different tokenizer/architecture)
-- Better numbered step handling (trained for long-horizon agentic reasoning)
-- 4x larger context window (128K vs 32K)
+| Category | Tests | Success Rate | vs 32B |
+|----------|-------|-------------|--------|
+| File operations (write, read, edit) | 5/5 | 100% | Same |
+| Command execution | 3/3 | 100% | Same |
+| Multi-step chains (2-10 steps) | 8/8 | 100% | +1 (4-step numbered fixed) |
+| Multi-step chains (15 steps) | 1/1 | 100% | **New** |
+| SSH / cross-server | 3/3 | 100% | +1 (infra health check) |
+| Git operations | 1/1 | 100% | Same |
+| Multi-file edit | 1/1 | 100% | **Was FAIL** |
+| Bug find + fix | 2/2 | 100% | **Was PARTIAL** (large file + calculator) |
+| System diagnostics | 1/1 | 100% | Same |
+| Project generation + self-debug | 1/1 | 100% | **New** |
+| Full microservice (7 files) | 0/1 | PARTIAL | **New** (23/26 tests pass) |
+
+**All 4 previous failure modes resolved.** Zero token leaks observed. Self-debugging is a new capability.
 
 ## Known Limitations (Post-Upgrade)
 
@@ -179,11 +189,12 @@ The model swap was verified working (API responds, Discord reconnected, basic ge
 5. **Proxy still needed** -- even with native tool calling, the SSE re-wrapping and response cleaning are still required for OpenClaw compatibility
 6. **Context vs VRAM** -- 128K set currently; could push to 256K (only ~6GB KV cache due to hybrid DeltaNet) but needs testing
 
-### Resolved Limitations (from 32B era)
-- ~~Multi-file editing~~ — Expected fixed (larger model, agentic training)
-- ~~`<|im_start|>` token leak~~ — Different tokenizer, should be eliminated
-- ~~Numbered step planning loops~~ — Trained for long-horizon reasoning
-- ~~32K context window~~ — Now 128K (4x improvement)
+### Resolved Limitations (confirmed by Round 3 stress tests)
+- ~~Multi-file editing~~ — **Confirmed fixed** (Test 24: PASS, uses edit tool correctly)
+- ~~`<|im_start|>` token leak~~ — **Confirmed eliminated** (0% occurrence across 31 tests)
+- ~~Numbered step planning loops~~ — **Confirmed fixed** (Test 16: 4-step numbered PASS, Test 27: 15-step PASS)
+- ~~32K context window~~ — **Now 128K** (sessions consuming 469K+ tokens successfully)
+- ~~Complex reasoning + tool execution~~ — **Confirmed fixed** (Test 25: bug find+fix PASS, Test 30: 422-line bug hunt PASS)
 
 ## Discord Integration
 

@@ -272,13 +272,13 @@ then: `Read the file /tmp/openclaw-test/hello.txt and show me its contents`
 
 ---
 
-## Overall Score
+## Rounds 1-2 Overall Score (Qwen2.5-Coder-32B-Instruct-AWQ)
 
 **Round 1:** 6/8 pass (75%)
 **Round 2:** 14/18 pass, 2 partial, 2 fail (78% pass, 89% functional)
 **Combined:** 20/26 pass, 3 partial, 3 fail (77% pass, 88% functional)
 
-## Key Improvements Since Round 1
+### Key Improvements Since Round 1
 
 1. **SSH now works** — key-based auth from .143→.122 with StrictHostKeyChecking=no
 2. **Multi-step chains dramatically improved** — 6-step (previously FAIL) now passes; 8 and 10-step chains pass
@@ -286,22 +286,316 @@ then: `Read the file /tmp/openclaw-test/hello.txt and show me its contents`
 4. **Git operations work** — including self-correction on missing git config
 5. **Session clearing between tests helps** — prevents context pollution from prior conversations
 
-## Remaining Failure Modes
+### Remaining Failure Modes (Qwen2.5-32B)
 
 1. **Multi-file edit (adding content to existing files)** — model uses `write` (overwrite) instead of `edit` (modify). This loses existing code. Workaround: explicit prompt "use the edit tool with oldText and newText".
 2. **Complex reasoning + tool execution** — when the agent needs to reason about a bug AND execute a fix, `<|im_start|>` tokens leak and corrupt the tool call JSON. The fix is identified correctly but never executed.
 3. **Numbered step prompts with 4+ steps** — explicitly numbering "do step 1, step 2, ..." can trigger planning loops. Natural language descriptions of the same tasks succeed.
 4. **Token leak (`<|im_start|>`)** — appears in ~30% of multi-step responses but is usually non-fatal. The model self-recovers in most cases. Fatal only when it occurs mid-tool-call emission.
 
-## Recommendations
+---
 
-1. **Use natural language descriptions** over numbered step lists — "create a Flask project with an app, tests, and Dockerfile" works better than "step 1: mkdir, step 2: write..."
-2. **Clear sessions between complex tasks** — `rm ~/.openclaw/agents/main/sessions/*.jsonl`
-3. **Use absolute paths** — the agent's working directory is `~/.openclaw/workspace`
-4. **Avoid interactive commands** — no password prompts, no sudo, no editors (vim/nano)
-5. **For SSH** — key-based auth is now configured (.143→.122)
-6. **For file edits** — explicitly tell the model to use the edit tool with oldText/newText
+## Round 3 — Model Upgrade Stress Test (2026-02-13 PM)
+
+**Model Upgrade:**
+| | Before | After |
+|---|--------|-------|
+| Model | Qwen2.5-Coder-32B-Instruct-AWQ | Qwen3-Coder-Next-FP8 (80B MoE) |
+| Active params | 32B (all dense) | 3B active / 80B total (MoE) |
+| Context window | 32,768 tokens | 131,072 tokens (128K) |
+| Max output | 8,192 tokens | 65,536 tokens |
+| vLLM version | v0.14.0 | v0.15.1 |
+| Tool parser | hermes (generic) | qwen3_coder (native) |
+| Architecture | Dense transformer | Hybrid DeltaNet + MoE |
+
+**Changes since Rounds 1-2:**
+- New model: Qwen3-Coder-Next-FP8 (80B total, 3B active MoE)
+- vLLM v0.15.1 with native `qwen3_coder` tool parser
+- 128K context window (4x increase)
+- 65K max output tokens (8x increase)
+- Sessions cleared between every test
+- All 26 original tests re-run + 5 new tests targeting 128K capabilities
+
+### Re-test: Tests 1-8 (Round 1 Scenarios)
+
+#### Test 1: File Write + Read
+**Prompt:** `Create a file at /tmp/openclaw-test/hello.txt with the content "Hello from OpenClaw with local Qwen!"`
+then: `Read the file /tmp/openclaw-test/hello.txt and show me its contents`
+
+**Result: PASS** — Write: 2015ms, Read: 1735ms
+- Clean execution, no token leak
+- Content verified correct
+
+#### Test 2: File Edit
+**Prompt:** `Edit /tmp/openclaw-test/hello.txt and change the word Hello to Greetings. Use the edit tool with oldText and newText.`
+
+**Result: PASS** — 3013ms
+- Used `edit` tool correctly
+- File verified: `Greetings from OpenClaw with local Qwen!`
+- **Previously PARTIAL** — old model used `write` for append operations
+
+#### Test 3: Command Execution (Multiple)
+**Prompt:** `Run these commands and show me the output: uname -a, df -h /, free -h, uptime`
+
+**Result: PASS** — 2762ms
+- All 4 commands returned with clean markdown formatting
+- Output includes headers and structured data
+
+#### Test 4: Multi-step Chain (6 steps)
+**Prompt:** `Do these 6 steps in order: 1) Create directory, 2) Write file, 3) Read it back, 4) Edit it, 5) Move it, 6) Read to verify`
+
+**Result: PASS** — 6342ms
+- All 6 steps executed cleanly in sequence
+- File content verified: `version=2.0` (edited from 1.0), moved to final location
+- **Previously FAIL** — old model got stuck in repetition loop with `<|im_start|>` token leak
+
+#### Test 5: File Move
+**Prompt:** `Move /tmp/openclaw-test/hello.txt to /tmp/openclaw-test/hello-moved.txt`
+
+**Result: PASS** — 1921ms
+
+#### Test 6: File Copy
+**Prompt:** `Copy /tmp/openclaw-test/hello-moved.txt to /tmp/openclaw-test/hello-copy.txt`
+
+**Result: PASS** — 1799ms
+
+#### Test 7: File Delete
+**Prompt:** `Delete the file /tmp/openclaw-test/hello-copy.txt`
+
+**Result: PASS** — 1711ms
+
+#### Test 8: SSH to Remote Host
+**Prompt:** `SSH to 192.168.0.122 as michael and run: hostname && uname -a`
+
+**Result: PASS** — 2247ms
+- Key-based auth works, returned hostname and kernel info
+- **Previously HANG** — now fixed with SSH key setup
+
+### Round 1 Re-test Summary
+
+| # | Test | Result (32B) | Result (80B MoE) | Time | Improvement |
+|---|------|:---:|:---:|------|-------------|
+| 1 | File Write + Read | PASS | **PASS** | 3.8s | Faster |
+| 2 | File Edit | PARTIAL | **PASS** | 3.0s | **Fixed** |
+| 3 | Multiple Commands | PASS | **PASS** | 2.8s | Faster |
+| 4 | Multi-step Chain (6) | FAIL | **PASS** | 6.3s | **Fixed** |
+| 5 | File Move | PASS | **PASS** | 1.9s | Faster |
+| 6 | File Copy | PASS | **PASS** | 1.8s | Faster |
+| 7 | File Delete | PASS | **PASS** | 1.7s | Faster |
+| 8 | SSH Remote | HANG | **PASS** | 2.2s | **Fixed** (infra) |
+
+**Round 1 Re-test: 8/8 PASS (100%)** — was 6/8 (75%)
+
+---
+
+### Re-test: Tests 9-26 (Round 2 Scenarios)
+
+#### Test 9: File Write (fresh session)
+**Result: PASS** — 1975ms (was 5268ms) — No token leak
+
+#### Test 10: File Read
+**Result: PASS** — 1776ms (was 1024ms)
+
+#### Test 11: File Edit (text replacement)
+**Result: PASS** — 3000ms (was 2388ms)
+
+#### Test 12: Multi-Command Execution
+**Result: PASS** — 3351ms (was 6893ms) — Clean markdown formatting
+
+#### Test 13: 2-Step Chain (mkdir + write)
+**Result: PASS** — 3004ms (was 2297ms)
+
+#### Test 14: Write Script + Execute
+**Result: PASS** — 2889ms (was 2066ms)
+
+#### Test 15: 3-Step Chain (write, read, edit)
+**Result: PASS** — 4001ms (was 5873ms)
+
+#### Test 16: 4-Step Chain (numbered)
+**Prompt:** `4 steps: 1) mkdir, 2) write count=0, 3) read to confirm, 4) edit to count=1`
+
+**Result: PASS** — 5181ms
+- All 4 steps completed cleanly including numbered format
+- File verified: `count=1`
+- **Previously PARTIAL** — old model got stuck in planning loop on steps 3-4
+
+#### Test 17: 5-Step Chain (project setup)
+**Result: PASS** — 4457ms (was 11123ms) — No token leak
+
+#### Test 18: 6-Step Chain
+**Result: PASS** — 9938ms (was 14103ms)
+
+#### Test 19: 8-Step Chain
+**Result: PASS** — 7790ms (was 10732ms)
+
+#### Test 20: 10-Step Chain
+**Result: PASS** — 7065ms (was 11274ms)
+
+#### Test 21: SSH to Remote Host
+**Result: PASS** — 2121ms (was 39102ms) — 18x faster
+
+#### Test 22: Cross-Server GPU + Disk Check
+**Result: PASS** — 3472ms (was 5637ms) — Clean GPU/disk summary
+
+#### Test 23: Git Operations (init, write, commit)
+**Result: PASS** — 2214ms (was 7703ms) — Commit verified
+
+#### Test 24: Multi-File Edit (modify 2 existing files)
+**Prompt:** `Edit app.py to add /version endpoint, edit Dockerfile to add EXPOSE 5000. Use the edit tool — do NOT overwrite.`
+
+**Result: PASS** — 4363ms
+- Used `edit` tool correctly for BOTH files
+- app.py: `/health` endpoint preserved, `/version` added correctly
+- Dockerfile: `EXPOSE 5000` added before CMD line
+- **Previously FAIL** — old model overwrote app.py with only new endpoint, losing existing code
+- **This was the #1 failure mode. Now fixed.**
+
+#### Test 25: Bug Finding + Fixing
+**Prompt:** `Read calculator.py, run it, find the bug (divide does a*b instead of a/b), fix it with edit, re-run to verify`
+
+**Result: PASS** — 5306ms
+- Read file, ran it, saw wrong output (20 instead of 5.0)
+- Identified bug: `return a * b` should be `return a / b`
+- Used edit tool to fix, re-ran and verified output: `5.0`
+- **No token leak. No corruption. Clean execution.**
+- **Previously PARTIAL** — old model found bug but token leak corrupted the edit tool call
+
+#### Test 26: System Diagnostics
+**Result: PASS** — 5179ms (was 7369ms) — Formatted table with PID, command, CPU%
+
+### Round 2 Re-test Summary
+
+| # | Test | Steps | Result (32B) | Result (80B MoE) | Time | Notes |
+|---|------|-------|:---:|:---:|------|-------|
+| 9 | File Write | 1 | PASS | **PASS** | 2.0s | No token leak |
+| 10 | File Read | 1 | PASS | **PASS** | 1.8s | Clean |
+| 11 | File Edit | 1 | PASS | **PASS** | 3.0s | Correct |
+| 12 | Multi-Command | 1 | PASS | **PASS** | 3.4s | Clean markdown |
+| 13 | 2-Step Chain | 2 | PASS | **PASS** | 3.0s | Clean |
+| 14 | Write + Execute | 2 | PASS | **PASS** | 2.9s | Clean |
+| 15 | 3-Step Chain | 3 | PASS | **PASS** | 4.0s | Clean |
+| 16 | 4-Step Chain (numbered) | 4 | PARTIAL | **PASS** | 5.2s | **Fixed** — no planning loop |
+| 17 | 5-Step Chain (project) | 5 | PASS | **PASS** | 4.5s | No token leak |
+| 18 | 6-Step Chain | 6 | PASS | **PASS** | 9.9s | Clean |
+| 19 | 8-Step Chain | 8 | PASS | **PASS** | 7.8s | Clean |
+| 20 | 10-Step Chain | 10 | PASS | **PASS** | 7.1s | Clean |
+| 21 | SSH Remote | 2 | PASS | **PASS** | 2.1s | 18x faster |
+| 22 | Cross-Server GPU | 2 | PASS | **PASS** | 3.5s | Clean |
+| 23 | Git Operations | 4 | PASS | **PASS** | 2.2s | 3x faster |
+| 24 | Multi-File Edit | 2 | FAIL | **PASS** | 4.4s | **Fixed** — uses edit correctly |
+| 25 | Bug Find + Fix | 4 | PARTIAL | **PASS** | 5.3s | **Fixed** — no token leak |
+| 26 | System Diagnostics | 1 | PASS | **PASS** | 5.2s | Clean |
+
+**Round 2 Re-test: 18/18 PASS (100%)** — was 14/18 pass, 2 partial, 2 fail (78%)
+
+---
+
+### New Tests: 128K Context Window Capabilities
+
+#### Test 27: 15-Step Chain
+**Prompt:** 15 steps: mkdir, write 5 files, ls, read 3 files, edit 2 files, verify edits, echo confirmation
+
+**Result: PASS** — 8169ms
+- All 15 steps completed in a single session
+- Files verified: a.txt=ALPHA (edited from alpha), b.txt=BETA (edited from beta)
+- Impossible with 32K context — would have exhausted token budget by step ~8
+
+#### Test 28: Complete Project Generation + Self-Debugging
+**Prompt:** Create a complete Flask REST API project (app.py, test_app.py, requirements.txt, Dockerfile, README.md), then run tests
+
+**Result: PASS** — 57834ms, 455K tokens used
+- Created all 5 files with proper code
+- Ran tests, found 3 failures due to test isolation issue
+- **Self-debugged:** rewrote test file with proper setUp/tearDown
+- All 11 tests passing after self-correction
+- Even attempted Docker build verification
+- **Genuine agentic problem-solving** — impossible with old 8K max output
+
+#### Test 29: Cross-Server Infrastructure Health Check
+**Prompt:** Full infra health check: local disk/memory, SSH to .122 for GPU/Docker/disk, summarize health
+
+**Result: PASS** — 6533ms
+- Checked local disk (56%), memory (107G available)
+- SSH to .122: GPU at 97% VRAM (expected for vLLM), 24 containers running
+- Identified `token-spy-proxy` as unhealthy
+- Gave health score: 9/10 with actionable concerns
+- Clean structured output with markdown tables
+
+#### Test 30: Large File Bug Hunt (422-line codebase)
+**Prompt:** Read 422-line Python file with 20 classes and 100 methods. Find the one method with a bug, fix it.
+
+**Result: PASS** — 10864ms, 168K tokens
+- Read entire 422-line file
+- Initially identified wrong method, then self-corrected
+- Found bug: Module13.method_3 returns `x * x` instead of `x + 68`
+- Fixed with edit tool
+- File verified correct
+
+#### Test 31: Full Microservice Generation (7 files + tests)
+**Prompt:** Create a complete user-service microservice with app.py, models.py, test_app.py, config.py, Dockerfile, docker-compose.yml, README.md. Then run tests.
+
+**Result: PARTIAL** — 68800ms, 469K tokens
+- All 7 files created successfully with proper code
+- 23/26 tests pass (3 fail due to content-type edge case: 415 vs 400)
+- Model attempted to self-debug but timed out
+- All generated code is functional and well-structured
+
+### New Tests Summary
+
+| # | Test | Steps | Result | Time | Tokens | Notes |
+|---|------|-------|--------|------|--------|-------|
+| 27 | 15-Step Chain | 15 | PASS | 8.2s | 131K | New frontier — impossible at 32K |
+| 28 | Project + Self-Debug | 10+ | PASS | 57.8s | 455K | Self-corrected test failures |
+| 29 | Cross-Server Health | 6 | PASS | 6.5s | 40K | Health score with actionable items |
+| 30 | Large File Bug Hunt | 4 | PASS | 10.9s | 169K | 422-line file, self-corrected |
+| 31 | Full Microservice | 12+ | PARTIAL | 68.8s | 469K | 7 files, 23/26 tests pass |
+
+---
+
+## Overall Score
+
+### Qwen2.5-Coder-32B-Instruct-AWQ (Rounds 1-2)
+**Combined:** 20/26 pass, 3 partial, 3 fail (77% pass, 88% functional)
+
+### Qwen3-Coder-Next-FP8 80B MoE (Round 3)
+**Original 26 tests:** 26/26 PASS **(100%)** — up from 88%
+**New tests (27-31):** 4/5 pass, 1 partial (80% pass, 100% functional)
+**Total (31 tests):** 30/31 pass, 1 partial **(97% pass, 100% functional)**
+
+### Comparison
+
+| Metric | Qwen2.5-32B | Qwen3-Coder-Next | Change |
+|--------|:-----------:|:-----------------:|--------|
+| Pass rate (26 tests) | 77% (20/26) | **100% (26/26)** | +23pp |
+| Functional rate | 88% | **100%** | +12pp |
+| Avg response time (1-step) | ~3.5s | ~2.3s | **34% faster** |
+| Max chain length (reliable) | 10 steps | **15+ steps** | +50% |
+| Token leaks | ~30% of multi-step | **0%** | **Eliminated** |
+| Multi-file edit | FAIL | **PASS** | **Fixed** |
+| Bug find + fix | PARTIAL | **PASS** | **Fixed** |
+| Numbered step lists | PARTIAL | **PASS** | **Fixed** |
+| Self-debugging | Not observed | **Yes** | **New capability** |
+| Max tokens per session | ~36K | **469K** | 13x more |
+
+## Previous Failure Modes — Status After Upgrade
+
+| Failure Mode | Qwen2.5-32B | Qwen3-Coder-Next | Status |
+|-------------|:-----------:|:-----------------:|--------|
+| Multi-file edit (write vs edit) | FAIL | PASS | **RESOLVED** |
+| `<\|im_start\|>` token leak | ~30% frequency | 0% observed | **RESOLVED** |
+| Numbered step planning loops | PARTIAL (4+ steps) | PASS (15+ steps) | **RESOLVED** |
+| Complex reasoning + tool execution | PARTIAL | PASS | **RESOLVED** |
+
+## Recommendations (Updated for Qwen3-Coder-Next)
+
+1. **Numbered step lists now work** — no need to avoid them; both numbered and natural language prompts succeed
+2. **Multi-file edits now work** — model correctly uses `edit` tool to modify without overwriting
+3. **Clear sessions between complex tasks** — `rm ~/.openclaw/agents/main/sessions/*.jsonl` (still good practice)
+4. **Use absolute paths** — the agent's working directory is `~/.openclaw/workspace`
+5. **Avoid interactive commands** — no password prompts, no sudo, no editors (vim/nano)
+6. **For SSH** — key-based auth is configured (.143→.122)
 7. **Monitor proxy logs** — `tail -f /tmp/vllm-proxy.log` shows tool extraction and SSE re-wrapping
-8. **Single-action prompts are most reliable** — 1-3 step tasks have ~100% success rate
-9. **Multi-step chains up to 10 steps work** when the steps are concrete file operations (write, read, exec)
-10. **Chains involving reasoning + editing are the weak point** — consider breaking these into separate prompts
+8. **Long chains (15+ steps) are reliable** — the 128K context window supports extended tool chains
+9. **Self-debugging works** — the model can run tests, diagnose failures, and fix code iteratively
+10. **Very complex generation (7+ files) may need multiple passes** — consider breaking into 2-3 prompts for >10 file projects
+11. **Token budget is generous** — sessions can consume 400K+ tokens without issues
