@@ -1,0 +1,267 @@
+# Disaster Recovery & Restore Guide
+
+**Last verified working state:** 2026-02-13
+**Score:** 88% functional (20/26 tests pass, 3 partial, 3 fail)
+
+This guide restores Android-16 (OpenClaw + Qwen2.5-Coder-32B via vLLM) from scratch. Follow in order.
+
+---
+
+## Prerequisites
+
+Two Ubuntu 24.04 servers on the same LAN:
+- **192.168.0.143** (Tower2) — OpenClaw host, SSH user: `michael`
+- **192.168.0.122** (lightheartworker) — GPU server, SSH user: `michael`
+
+Hardware on .122: NVIDIA RTX PRO 6000 Blackwell (96GB VRAM)
+
+---
+
+## Step 1: Restore vLLM on .122
+
+```bash
+ssh michael@192.168.0.122
+
+# Pull the model (skip if already cached)
+# Model lives at ~/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-32B-Instruct-AWQ/
+docker pull vllm/vllm-openai:v0.14.0
+
+# Start vLLM
+docker run -d \
+  --name vllm-coder \
+  --runtime nvidia \
+  --gpus all \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -p 8000:8000 \
+  --ipc=host \
+  --restart unless-stopped \
+  vllm/vllm-openai:v0.14.0 \
+  --model Qwen/Qwen2.5-Coder-32B-Instruct-AWQ \
+  --port 8000 \
+  --gpu-memory-utilization 0.90 \
+  --max-model-len 32768 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --tensor-parallel-size 1
+
+# Wait for startup (~60-90 seconds)
+until curl -s http://localhost:8000/v1/models > /dev/null 2>&1; do sleep 5; echo "waiting..."; done
+echo "vLLM ready"
+curl -s http://localhost:8000/v1/models | python3 -m json.tool
+```
+
+**Verify:** You should see `Qwen/Qwen2.5-Coder-32B-Instruct-AWQ` in the model list.
+
+---
+
+## Step 2: Restore the Proxy on .122
+
+```bash
+ssh michael@192.168.0.122
+
+# Install dependencies
+pip3 install flask requests
+
+# Copy the proxy from this repo
+# (from your local machine):
+scp proxy/vllm-tool-proxy.py michael@192.168.0.122:/home/michael/vllm-tool-proxy.py
+
+# Start the proxy
+pkill -f vllm-tool-proxy.py 2>/dev/null
+nohup python3 /home/michael/vllm-tool-proxy.py \
+  --port 8003 \
+  --vllm-url http://192.168.0.122:8000 \
+  > /tmp/vllm-proxy.log 2>&1 &
+
+# Verify
+sleep 2
+curl http://localhost:8003/health
+# Expected: {"status":"ok","version":"v4","vllm_url":"http://192.168.0.122:8000"}
+```
+
+**Verify:** Health endpoint returns status ok. Check logs: `tail -f /tmp/vllm-proxy.log`
+
+---
+
+## Step 3: Install OpenClaw on .143
+
+```bash
+ssh michael@192.168.0.143
+
+# Node.js 22 should already be installed system-wide
+node --version  # Should be v22.22.0
+
+# Install OpenClaw globally
+sudo npm install -g openclaw@2026.2.12
+
+# Verify
+openclaw --version  # Should show 2026.2.12
+```
+
+---
+
+## Step 4: Restore OpenClaw Config on .143
+
+```bash
+ssh michael@192.168.0.143
+
+mkdir -p ~/.openclaw
+
+# Copy config from this repo
+# (from your local machine):
+scp configs/openclaw.json michael@192.168.0.143:~/.openclaw/openclaw.json
+
+# Delete cached models to force regeneration
+rm -f ~/.openclaw/agents/main/agent/models.json
+
+# Set API key environment variable
+grep -q VLLM_API_KEY ~/.bashrc || echo 'export VLLM_API_KEY=vllm-local' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Verify config is correct:**
+```bash
+python3 -c "import json; c=json.load(open('/home/michael/.openclaw/openclaw.json')); print('baseUrl:', c['models']['providers']['vllm']['baseUrl']); print('model:', c['models']['providers']['vllm']['models'][0]['id'])"
+# Expected:
+# baseUrl: http://192.168.0.122:8003/v1
+# model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+```
+
+**Critical:** The baseUrl MUST point to port **8003** (proxy), NOT 8000 (vLLM direct).
+
+---
+
+## Step 5: Restore SSH Key-Based Auth (.143 → .122)
+
+```bash
+ssh michael@192.168.0.143
+
+# Generate key if it doesn't exist
+[ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' -C 'android-16@tower2'
+
+# Copy key to .122 (will prompt for password: ##Linux-8488##)
+# Install sshpass first if needed: sudo apt-get install -y sshpass
+sshpass -p '##Linux-8488##' ssh-copy-id -o StrictHostKeyChecking=no michael@192.168.0.122
+
+# Add SSH config
+cat >> ~/.ssh/config << 'EOF'
+
+Host 192.168.0.122
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    User michael
+EOF
+chmod 600 ~/.ssh/config
+
+# Verify
+ssh -o BatchMode=yes michael@192.168.0.122 'echo SSH_OK && hostname'
+# Expected: SSH_OK \n lightheartworker
+```
+
+---
+
+## Step 6: Verify End-to-End
+
+```bash
+ssh michael@192.168.0.143
+
+# Test 1: Simple text response
+VLLM_API_KEY=vllm-local openclaw agent --local --agent main -m 'What is 2+2?'
+
+# Test 2: Tool call (file write)
+VLLM_API_KEY=vllm-local openclaw agent --local --agent main -m 'Create a file at /tmp/restore-test.txt with the content: restore successful'
+
+# Test 3: Verify file was created
+cat /tmp/restore-test.txt
+# Expected: restore successful
+
+# Test 4: SSH via agent
+VLLM_API_KEY=vllm-local openclaw agent --local --agent main -m 'SSH to 192.168.0.122 and run hostname'
+```
+
+If all 4 tests pass, the restore is complete.
+
+---
+
+## Troubleshooting
+
+### "No reply from agent" with 0 tokens
+The SSE re-wrapping isn't working. Check:
+```bash
+# Test proxy directly
+curl -X POST http://192.168.0.122:8003/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen2.5-Coder-32B-Instruct-AWQ","messages":[{"role":"user","content":"hi"}],"stream":true}'
+# Should return: data: {...}\n\n chunks ending with data: [DONE]
+```
+
+### Config validation errors on OpenClaw startup
+Only use validated compat fields. The working set is:
+```json
+"compat": {
+  "supportsDeveloperRole": false,
+  "supportsStore": false,
+  "maxTokensField": "max_tokens",
+  "supportsReasoningEffort": false
+}
+```
+Do NOT add: `supportsStrictMode`, `supportedParameters`, `streaming`, `fallback`
+
+### vLLM rejects `store` or `max_completion_tokens`
+These mean the compat flags are missing. Re-copy `configs/openclaw.json` and delete models cache:
+```bash
+rm -f ~/.openclaw/agents/main/agent/models.json
+```
+
+### Proxy returns 502
+vLLM isn't running or isn't reachable from the proxy:
+```bash
+ssh michael@192.168.0.122
+curl http://localhost:8000/v1/models  # Should return model list
+docker ps | grep vllm               # Should show running container
+```
+
+### SSH still prompts for password
+Key auth isn't configured. Re-run Step 5. Check:
+```bash
+ssh -o BatchMode=yes -v michael@192.168.0.122 'echo ok' 2>&1 | grep -i 'auth'
+```
+
+### Agent gets stuck / repetition loop
+Clear sessions and try a simpler prompt:
+```bash
+rm -rf ~/.openclaw/agents/main/sessions/*.jsonl
+```
+
+---
+
+## Version Pins (Exact Known-Good State)
+
+| Component | Version | Location |
+|-----------|---------|----------|
+| OpenClaw | 2026.2.12 | .143: `/usr/bin/openclaw` |
+| Node.js | 22.22.0 | .143: system-wide |
+| vLLM | 0.14.0 | .122: Docker `vllm/vllm-openai:v0.14.0` |
+| Model | Qwen/Qwen2.5-Coder-32B-Instruct-AWQ | .122: `~/.cache/huggingface/` |
+| Python | 3.12.3 | .122: system |
+| Flask | 3.1.2 | .122: pip |
+| Proxy | v4.0 + SSE patch | .122: `/home/michael/vllm-tool-proxy.py` |
+| Ubuntu | 24.04 LTS | Both servers |
+| Kernel | 6.17.0-14-generic | Both servers |
+| GPU | RTX PRO 6000 Blackwell (96GB) | .122 |
+
+## File Locations
+
+| File | Server | Path |
+|------|--------|------|
+| OpenClaw config | .143 | `~/.openclaw/openclaw.json` |
+| OpenClaw binary | .143 | `/usr/bin/openclaw` |
+| Workspace | .143 | `~/.openclaw/workspace/` |
+| Sessions | .143 | `~/.openclaw/agents/main/sessions/*.jsonl` |
+| Models cache | .143 | `~/.openclaw/agents/main/agent/models.json` |
+| SSH key | .143 | `~/.ssh/id_ed25519` |
+| SSH config | .143 | `~/.ssh/config` |
+| vLLM Docker | .122 | Container: `vllm-coder` |
+| Proxy script | .122 | `/home/michael/vllm-tool-proxy.py` |
+| Proxy log | .122 | `/tmp/vllm-proxy.log` |
+| Model weights | .122 | `~/.cache/huggingface/hub/models--Qwen--Qwen2.5-Coder-32B-Instruct-AWQ/` |
