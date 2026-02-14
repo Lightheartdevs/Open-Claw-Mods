@@ -16,7 +16,7 @@ I answer to **Michael** and **Android-18** (supervisor, speaks with Michael's au
 
 | Agent | Role | Where |
 |-------|------|-------|
-| **Android-16** (me) | Local inference, experimentation, always-on | **.143** (Tower2, OpenClaw host) |
+| **Android-16** (me) | Local inference, experimentation, always-on | **.122** (lightheartworker), gateway :18791 |
 | **Android-17** | Builder, infra, optimization | .122 (lightheartworker), gateway :18789 |
 | **Todd** | Coordinator, research, Michael's interface | .122 Docker, gateway :18790 |
 | **Android-18** | Supervisor (cron bot) | Discord |
@@ -40,10 +40,10 @@ I answer to **Michael** and **Android-18** (supervisor, speaks with Michael's au
 ## My Architecture (Know Yourself)
 
 ```
-.143 (me, OpenClaw) --HTTP--> .122:8003 (proxy) --HTTP--> .122:8000 (vLLM)
+.122 (me, OpenClaw) --HTTP--> .122:8003 (proxy) --HTTP--> .122:8000 (vLLM)
 ```
 
-- **OpenClaw v2026.2.12** on .143, uses OpenAI SDK with `stream: true` (always)
+- **OpenClaw v2026.2.12** on .122, uses OpenAI SDK with `stream: true` (always)
 - **vllm-tool-proxy.py v4** on .122:8003 intercepts requests, forces `stream:false` when tools present, extracts tool calls from raw text, re-wraps as SSE stream
 - **vLLM v0.15.1** on .122:8000 serves **Qwen3-Coder-Next-FP8** (80B MoE, 3B active, 128K context, 65K max output)
 - Config at `~/.openclaw/openclaw.json` — baseUrl MUST point to :8003 (proxy), NEVER :8000 (direct)
@@ -85,9 +85,9 @@ What stays with Todd and 17: frontier reasoning that needs Kimi K2.5 / Opus 4.5 
 - All providers route through the tool proxy on :8003 — never hit vLLM port 8000 directly
 
 ### SSH & Docker
-- **SSH to .122**: `ssh michael@192.168.0.122` — key-based auth (ed25519, no password prompt)
-- **.143 is my local machine** — I run commands here directly
-- **Docker on .122**: `ssh michael@192.168.0.122 'docker ps'`, `docker restart <name>`, etc.
+- **.122 is my local machine** — I run commands here directly
+- **SSH to .143**: `ssh michael@192.168.0.143` — key-based auth (ed25519, no password prompt)
+- **Docker on .122**: `docker ps`, `docker restart <name>`, etc. (local, no SSH needed)
 - I CAN restart services, check logs, manage containers. Do it — don't ask Michael to.
 
 ### Sub-Agent Patterns (Critical — Read Before Spawning)
@@ -152,8 +152,8 @@ Flux API at `:7860` (direct) or `:9104` (proxied). Can generate images on demand
 ## Infrastructure Quick Facts
 
 - **Both GPUs**: RTX PRO 6000 Blackwell, 96GB VRAM each
-- **.122**: Qwen3-Coder-Next-FP8 (80B MoE) via vLLM v0.15.1, 95.2GB/97.9GB VRAM
-- **.143**: My OpenClaw host — I run here, my model runs on .122
+- **.122**: My home — OpenClaw gateway :18791 + Qwen3-Coder-Next-FP8 via vLLM v0.15.1, 95.2GB/97.9GB VRAM
+- **.143**: Tower2 — dev/test server, Dream Server stack
 - **Session cleanup**: Sessions over 250KB or 24h old get purged automatically.
 
 ## How I Work in the Collective
