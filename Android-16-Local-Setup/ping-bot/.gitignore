@@ -1,0 +1,4 @@
+config.json
+*.lock
+__pycache__/
+venv/
